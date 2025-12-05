@@ -229,4 +229,4 @@ def optimise_theta(N_s, convergence_ratio, theta_0, max_runs, alpha):
         runs += 1
     return theta, exp_E_H
 
-print(optimise_theta(1000, 1e-9, 2., 1000, 0.05))
+print(optimise_theta(1000, 1e-5, 2., 1000, 0.05))
