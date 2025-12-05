@@ -151,12 +151,15 @@ def cent_diff_4_laplacian(x, y, z, func, theta, h):
 
     return der_x + der_y + der_z
 
+def analytical_laplacian(theta, x, y, z):
+    return (theta**2 - (2*theta / r(x,y,z))) * hydrogen_wavefunc(theta,x,y,z)
+
 def local_energy_H_3D(theta, x, y, z):
     wf_value = hydrogen_wavefunc(theta, x, y, z)
     return (-0.5 * (cent_diff_4_laplacian(x,y,z,hydrogen_wavefunc,theta, h_der)/wf_value)) - 1/r(x,y,z)
 
 
-def generate_randoms_3d(N_s, theta, burn_in = 1000):
+def generate_randoms_3d(N_s, theta, burn_in = 100):
     pos_samples = np.zeros((N_s+burn_in, 3))
     pos_0 = np.array([1e-5,1e-5,1e-5])
     pos = pos_0
@@ -183,6 +186,16 @@ theta = 3.0
 samples = generate_randoms_3d(100000, theta)
 
 r_samples = np.sqrt(np.sum(samples**2, axis=1))
+#%%
+'''
+Numerical verification of Laplacian
+
+'''
+rand_x, rand_y, rand_z = random.random(), random.random(), random.random()
+theta_lap = random.random() * 5
+numerical_laplacian = cent_diff_4_laplacian(rand_x, rand_y, rand_z, hydrogen_wavefunc, theta_lap, 3e-3)
+analyt_laplacian = analytical_laplacian(theta_lap, rand_x, rand_y, rand_z)
+print(f"Absolute difference between analytical laplacian and numerically calculated laplacian is {abs(numerical_laplacian - analyt_laplacian)}, relative difference of {abs(numerical_laplacian - analyt_laplacian) / analyt_laplacian}")
 #%%
 plt.figure(figsize=(10, 6))
 plt.hist(r_samples, bins=100, density=True, alpha=0.6, label='Metropolis Samples', color='skyblue', edgecolor='black')
@@ -227,6 +240,11 @@ def optimise_theta(N_s, convergence_ratio, theta_0, max_runs, alpha):
         theta_change_ratio = abs((theta - theta_prime) / theta)
         theta = theta_prime
         runs += 1
-    return theta, exp_E_H
-
-print(optimise_theta(1000, 1e-9, 2., 100, 0.05))
+    final_samples = generate_randoms_3d(N_s, theta)
+    final_x_vals = final_samples[:, 0]
+    final_y_vals = final_samples[:, 1]
+    final_z_vals = final_samples[:, 2]
+    final_energies = local_energy_H_3D(theta, final_x_vals, final_y_vals, final_z_vals)
+    final_E_exp = np.mean(final_energies)
+    return theta, final_E_exp, runs
+print(optimise_theta(1000, 1e-10, 2., 100, 0.5))
