@@ -285,16 +285,16 @@ final_x_vals = random_proof_samples[:, 0]
 final_y_vals = random_proof_samples[:, 1]
 final_z_vals = random_proof_samples[:, 2]
 fig, axs = plt.subplots(2, 2, figsize=(10, 10))
-axs[0,0].hist2d(final_x_vals, final_y_vals, bins=(100,100),  density=True, cmap=plt.cm.jet)
+axs[0,0].hist2d(final_x_vals, final_y_vals, bins=(100,100),  density=True, cmap=plt.cm.inferno)
 axs[0,0].set_title('100x100 Histogram in XY plane')
 
-axs[0, 1].hist2d(final_x_vals, final_y_vals, bins=(50,50), density=True, cmap=plt.cm.jet)
+axs[0, 1].hist2d(final_x_vals, final_y_vals, bins=(50,50), density=True, cmap=plt.cm.inferno)
 axs[0,1].set_title('50x50 Histogram in XY plane')
 
-axs[1,0].hist2d(final_x_vals, final_y_vals, bins=(200,200), density=True, cmap=plt.cm.jet)
+axs[1,0].hist2d(final_x_vals, final_y_vals, bins=(200,200), density=True, cmap=plt.cm.inferno)  
 axs[1,0].set_title('200x200 Histogram in XY plane') 
 
-axs[1,1].hist2d(final_x_vals, final_y_vals, bins=(400,400), density=True, cmap=plt.cm.jet)
+axs[1,1].hist2d(final_x_vals, final_y_vals, bins=(400,400), density=True, cmap=plt.cm.inferno)
 axs[1,1].set_title('400x400 Histogram in XY plane')
 plt.tight_layout()
 #plt.colorbar(ax=axs.ravel().tolist(), label='Density')
@@ -311,8 +311,8 @@ def h_molecule_wavefunc(theta, q1, q2, r1, r2):
     psi = (np.exp(-theta[0] * (r_vector(r1-q1) + r_vector(r2-q2))) + 
            np.exp(-theta[0] * (r_vector(r1-q2) + r_vector(r2-q1)))) * np.exp(-(theta[1]) / (1+theta[2]*r_vector(r1-r2)))
     return psi
-
 def generate_randoms_3d_2particles(N_s, theta, q1, q2, r1_0 = np.array([1e-5,1e-5,1e-5]), r2_0 = -np.array([1e-5,1e-5,1e-5]), burn_in = 100):
+    rng = np.random.default_rng()
     pos1_samples = np.zeros((N_s+burn_in, 3)) 
     pos2_samples = np.zeros((N_s+burn_in, 3))
     pos1_0 = r1_0
@@ -320,16 +320,10 @@ def generate_randoms_3d_2particles(N_s, theta, q1, q2, r1_0 = np.array([1e-5,1e-
     pos1 = pos1_0
     pos2 = pos2_0
     for i in range(N_s + burn_in):
-        random_x1_step = (np.random.rand() - 0.5) * 2
-        random_y1_step = (np.random.rand() - 0.5) * 2
-        random_z1_step = (np.random.rand() - 0.5) * 2
-        random1_step = np.array([random_x1_step, random_y1_step, random_z1_step])
+        random1_step = rng.normal(0, 1, 3)
         pos1_prime = pos1 + random1_step
 
-        random_x2_step = (np.random.rand() - 0.5) * 2
-        random_y2_step = (np.random.rand() - 0.5) * 2
-        random_z2_step = (np.random.rand() - 0.5) * 2
-        random2_step = np.array([random_x2_step, random_y2_step, random_z2_step])
+        random2_step = rng.normal(0, 1, 3)
         pos2_prime = pos2 + random2_step
 
         p_x = (h_molecule_wavefunc(theta, q1, q2, pos1, pos2))**2
@@ -345,6 +339,40 @@ def generate_randoms_3d_2particles(N_s, theta, q1, q2, r1_0 = np.array([1e-5,1e-
         pos1_samples[i] = pos1
         pos2_samples[i] = pos2
     return pos1_samples[burn_in:], pos2_samples[burn_in:], pos1_samples[-1], pos2_samples[-1]
+
+def generate_randoms_3d_vectorised(n_walkers, steps, step_size, theta, q1, q2, r1_0 = np.array([1e-5,1e-5,1e-5]), r2_0 = -np.array([1e-5,1e-5,1e-5]), burn_in = 100):
+    rng = np.random.default_rng()
+    if r1_0.ndim == 1:
+        pos1 = np.tile(r1_0, (n_walkers, 1))
+        pos2 = np.tile(r2_0, (n_walkers, 1))
+    else:
+        pos1 = r1_0.copy()
+        pos2 = r2_0.copy()
+    pos1_samples = np.zeros((steps, n_walkers, 3))
+    pos2_samples = np.zeros((steps, n_walkers, 3))
+    p_x = (h_molecule_wavefunc(theta, q1, q2, pos1, pos2))**2
+    for i in range(steps + burn_in):
+        random1_step = rng.normal(0, step_size, (n_walkers, 3))
+        pos1_prime = pos1 + random1_step
+
+        random2_step = rng.normal(0, step_size, (n_walkers, 3))
+        pos2_prime = pos2 + random2_step
+        p_x_prime = (h_molecule_wavefunc(theta, q1, q2, pos1_prime, pos2_prime))**2
+        with np.errstate(divide='ignore', invalid='ignore'):
+            ratio = p_x_prime / p_x
+            np.nan_to_num(ratio, copy=False, nan=0.0, posinf=1.0)
+            p_acc = np.minimum(ratio, 1.0)
+
+        rand = rng.random(n_walkers)
+        accepted = rand <= p_acc
+        pos1[accepted] = pos1_prime[accepted]
+        pos2[accepted] = pos2_prime[accepted]
+        p_x[accepted] = p_x_prime[accepted]
+        if i >= burn_in:
+            pos1_samples[i - burn_in] = pos1
+            pos2_samples[i - burn_in] = pos2
+    return pos1_samples.reshape(-1, 3), pos2_samples.reshape(-1, 3), pos1_samples[-1], pos2_samples[-1]
+
 
 def cent_diff_4_laplacian_H2(theta, q1, q2, r1, r2, func, h=1e-5):
     x_diff_h = np.array([h,0,0])
@@ -378,15 +406,42 @@ def cent_diff_4_laplacian_H2(theta, q1, q2, r1, r2, func, h=1e-5):
             30 * current_point) / (12 * h**2)
     return der_r1_x + der_r1_y + der_r1_z + der_r2_x + der_r2_y + der_r2_z
 
+def cent_diff_2_laplacian_H2(theta, q1, q2, r1, r2, func, h=1e-5):
+    x_diff_h = np.array([h,0,0])
+    y_diff_h = np.array([0,h,0])
+    z_diff_h = np.array([0,0,h])
+
+    #x_diff_2h = np.array([2*h,0,0])
+    #y_diff_2h = np.array([0,2*h,0])
+    #z_diff_2h = np.array([0,0,2*h])
+
+    current_point = func(theta, q1, q2, r1, r2)
+    #loop for r1
+    der_r1_x =   (func(theta, q1, q2, r1 + x_diff_h, r2) + func(theta, q1, q2, r1 - x_diff_h, r2) - 
+                  2 * current_point) / (h**2)
+    der_r1_y = (func(theta, q1, q2, r1 + y_diff_h, r2) + func(theta, q1, q2, r1 - y_diff_h, r2) - 
+                  2 * current_point) / (h**2)
+    der_r1_z = (func(theta, q1, q2, r1 + z_diff_h, r2) + func(theta, q1, q2, r1 - z_diff_h, r2) - 
+                  2 * current_point) / (h**2)
+    #loop for r2
+    der_r2_x = (func(theta, q1, q2, r1, r2 + x_diff_h) + func(theta, q1, q2, r1, r2 - x_diff_h) - 
+                  2 * current_point) / (h**2)
+    der_r2_y = (func(theta, q1, q2, r1, r2 + y_diff_h) + func(theta, q1, q2, r1, r2 - y_diff_h) - 
+                  2 * current_point) / (h**2)
+    der_r2_z = (func(theta, q1, q2, r1, r2 + z_diff_h) + func(theta, q1, q2, r1, r2 - z_diff_h) -
+            2 * current_point) / (h**2)
+    return der_r1_x + der_r1_y + der_r1_z + der_r2_x + der_r2_y + der_r2_z
+
 def local_energy_H2(theta, q1, q2, r1, r2):
     wf_value = h_molecule_wavefunc(theta, q1, q2, r1, r2)
-    kinetic = -0.5 * cent_diff_4_laplacian_H2(theta, q1, q2, r1, r2, h_molecule_wavefunc) / wf_value
+    kinetic = -0.5 * cent_diff_2_laplacian_H2(theta, q1, q2, r1, r2, h_molecule_wavefunc) / wf_value
     potential = -(1/r_vector(r1-q1) + 1/r_vector(r1-q2) + 
                   1/r_vector(r2-q1) + 1/r_vector(r2-q2)) + (1/r_vector(r1 - r2) + 1/np.linalg.norm(q1 - q2))
     return kinetic + potential
 #%%
 
-def der_H2_theta(theta, q1, q2, r1, r2, energies, E_exp, N_s):
+def der_H2_theta(theta, q1, q2, r1, r2, energies, E_exp):
+    N_s = energies.shape[0]
     dphitheta = np.zeros((3, N_s))
     wf_value = h_molecule_wavefunc(theta, q1, q2, r1, r2)
     r1q1 = abs(r_vector(r1 - q1))
@@ -410,35 +465,88 @@ def der_H2_theta(theta, q1, q2, r1, r2, energies, E_exp, N_s):
     grad_exp = ((energies - E_exp) * (dphitheta/wf_value))
     return 2 * np.mean(grad_exp, axis=1)
 
-def iterate_theta_H2(theta, q1, q2, r1, r2, alpha, exp_E, energies, N_s):
-    new_theta = theta - alpha * der_H2_theta(theta, q1, q2, r1, r2, energies, exp_E, N_s)
+def iterate_theta_H2(theta, q1, q2, r1, r2, alpha, exp_E, energies):
+    new_theta = theta - alpha * der_H2_theta(theta, q1, q2, r1, r2, energies, exp_E)
     return new_theta
 
-def optimise_theta_H2(N_s, convergence_ratio, theta_0, max_runs, alpha, q1, q2):
+def optimise_theta_H2(N_s, convergence_ratio, theta_0, max_runs, alpha, q1, q2, minruns = 100):
     theta = theta_0
     thetas = []
     runs = 0
     theta_change_ratio = 100
-    while theta_change_ratio > convergence_ratio and runs<= max_runs:
+    while (theta_change_ratio > convergence_ratio and  runs <= max_runs) or runs < minruns:
         if runs == 0:
-            r1_samples, r2_samples, last_r1, last_r2 = generate_randoms_3d_2particles(N_s, theta, q1, q2)
+            r1_samples, r2_samples, last_r1, last_r2 = generate_randoms_3d_vectorised(N_s, 1000, 0.5, theta, q1, q2)
         else:
-            r1_samples, r2_samples, last_r1, last_r2 = generate_randoms_3d_2particles(N_s, theta, q1, q2, last_r1, last_r2)
+            r1_samples, r2_samples, last_r1, last_r2 = generate_randoms_3d_vectorised(N_s, 1000, 0.5, theta, q1, q2, last_r1, last_r2)
         energies = local_energy_H2(theta, q1, q2, r1_samples, r2_samples)
         exp_E_H = np.mean(energies)
-        theta_prime = iterate_theta_H2(theta, q1, q2, r1_samples, r2_samples, alpha, exp_E_H, energies, N_s)
+        theta_prime = iterate_theta_H2(theta, q1, q2, r1_samples, r2_samples, alpha, exp_E_H, energies)
         theta_change_ratio = np.max(abs((theta - theta_prime) / theta))
         theta = theta_prime
         thetas.append(theta)
         runs += 1
-    final_r1_samples, final_r2_samples, last_r1, last_r2 = generate_randoms_3d_2particles(N_s, theta, q1, q2, last_r1, last_r2)
+        print(runs)
+    final_r1_samples, final_r2_samples, last_r1, last_r2 = generate_randoms_3d_vectorised(N_s, 1000, 0.5, theta, q1, q2, last_r1, last_r2)
     final_energies = local_energy_H2(theta, q1, q2, final_r1_samples, final_r2_samples)
     final_E_exp = np.mean(final_energies)
 
     return theta, final_E_exp, runs, thetas, final_r1_samples, final_r2_samples
 #%%
+Ns = 10
+alpha = 0.01
+theta_0 = [1.0, 1., 1.]  # Initial guess for theta
+
+qs = np.linspace(1e-2, 2., 10)  # Nuclear separations from near 0 to 2.5 a.u.
+energies = []
+nuclear_separations = []
+test_samples_r1, test_samples_r2, _, _ = generate_randoms_3d_vectorised(Ns, 1000, 0.5, theta_0, np.array([-1.,0.,0.]), np.array([1.,0.,0.]))
+all_test_samples = np.vstack((test_samples_r1, test_samples_r2))
+test_x_vals = all_test_samples[:, 0]
+test_y_vals = all_test_samples[:, 1]
+plt.hist2d(test_x_vals, test_y_vals, bins=500, density=True, cmap=plt.cm.inferno, range=[[-4, 4], [-4, 4]])
+plt.title(f'Histogram in XY plane for nuclear separation of 2.0')
+plt.xlim(-4,4)
+plt.ylim(-4,4)
+plt.gca().set_aspect('equal', adjustable='box')
+plt.show()
+#'''
+#%%
+for index, q in enumerate(qs):
+    q1, q2 = np.array([q, 0., 0.]), np.array([-q, 0., 0.])
+    theta, E_exp, runs, thetas, final_r1_samples, final_r2_samples = optimise_theta_H2(Ns, 5e-5, theta_0, 1000, alpha, q1, q2)
+    energies.append(E_exp)
+    nuclear_separations.append(2*q)
+    print(f'For nuclear separation of {abs(q1 - q2)}, theta converged to {theta} in {runs} runs with expected energy of {E_exp} Hartree')
+    all_samples = np.vstack((final_r1_samples, final_r2_samples))
+    x_vals = all_samples[:, 0]
+    y_vals = all_samples[:, 1]
+    plt.hist2d(x_vals, y_vals, bins=200, density=True, cmap=plt.cm.inferno, range=[[-4, 4], [-4, 4]])
+    plt.title(f'Histogram in XY plane for nuclear separation of {2*q}')
+    plt.xlim(-4,4)
+    plt.ylim(-4,4)
+    plt.gca().set_aspect('equal', adjustable='box')
+    plt.show()
+    plt.plot(range(len(thetas)), [t[0] for t in thetas], 'o-', markersize=4)
+    plt.xlabel('Iteration')
+    plt.ylabel('Theta[0] value')
+    plt.title(f'Theta[0] Optimization Progression for nuclear separation of {abs(q1 - q2)}')
+    plt.grid()
+    plt.show()
+#%%
+plt.plot(nuclear_separations, energies, 'o-', markersize=4)
+plt.xlabel('Nuclear Separation (a.u.)')
+plt.ylabel('Expected Energy (Hartree)')
+plt.title('H2 Molecule Energy vs Nuclear Separation')
+plt.axhline(y=-1.174, color='r', linestyle='--', label='Target (-1.174 Hartree)')
+plt.legend()
+plt.show()
+
+'''
+
 
 # --- VERIFICATION PARAMETERS ---
+
 q1_test = np.array([0., 0., 0.7])  # Nucleus A
 q2_test = np.array([0., 0., -0.7]) # Nucleus B (R = 1.4)
 
@@ -446,16 +554,16 @@ q2_test = np.array([0., 0., -0.7]) # Nucleus B (R = 1.4)
 theta_start = np.array([1.0, 0.5, 0.1])
 
 # Conservative learning rate
-learning_rate = 0.005 
+learning_rate = 0.001 
 
 print("--- STARTING H2 EQUILIBRIUM TEST ---")
 print(f"Target Energy: approx -1.17 Hartree")
 
 theta_final, E_final, runs, hist_theta, r1_fin, r2_fin = optimise_theta_H2(
-    N_s=10000, 
-    convergence_ratio=5e-5, 
+    N_s=1000, 
+    convergence_ratio=1e-5, 
     theta_0=theta_start, 
-    max_runs=500, 
+    max_runs=1000, 
     alpha=learning_rate, 
     q1=q1_test, 
     q2=q2_test
@@ -471,7 +579,6 @@ plt.ylabel('Theta[0] value')
 plt.title('Theta[0] Optimization Progression for H2 Molecule')
 plt.grid()
 plt.show()
-#%%
 # 1. Plot Energy Convergence
 # We want to see a "Hockey Stick" curve that flattens out
 plt.figure(figsize=(10,4))
@@ -496,4 +603,5 @@ plt.ylabel("Z")
 plt.legend()
 plt.tight_layout()
 plt.show()
-#%%
+'''
+# %%
