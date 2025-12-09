@@ -5,27 +5,6 @@ import matplotlib.pyplot as plt
 import random
 import math
 #%%
-'''
-herms = []
-for i in range(8):
-    herms.append(hermite(i))
-
-x = np.linspace(-2, 2, 10000)
-ys = []
-for herm in herms:
-    ys.append(herm(x))
-n = 0
-for y in ys:
-    plt.plot(x,y, label = n)
-    n+=1
-plt.legend()
-plt.show()
-'''
-'''
-We assume that wavefunction spans across all space (domain stretches from -inf to inf), thus central difference scheme is best to numerically determine derivative
-
-We use a central difference scheme that is accurate to 2nd order
-'''
 #%%
 def exact_wavefunc(x, n):
     return eval_hermite(n, x) * np.exp(-x**2 / 2)
@@ -469,16 +448,28 @@ def iterate_theta_H2(theta, q1, q2, r1, r2, alpha, exp_E, energies):
     new_theta = theta - alpha * der_H2_theta(theta, q1, q2, r1, r2, energies, exp_E)
     return new_theta
 
-def optimise_theta_H2(N_s, convergence_ratio, theta_0, max_runs, alpha, q1, q2, minruns = 100):
+def get_blocking_error(data):
+    n = len(data)
+    var = np.var(data, ddof=1)
+    errors = [np.sqrt(var/n)]
+    while n >=4:
+        n = n // 2
+        blocked_data = np.mean(data[:n*2].reshape(-1, 2), axis=1)
+        var_new = np.var(blocked_data, ddof=1)
+        error_new = np.sqrt(var_new/n)
+        errors.append(error_new)
+        data = blocked_data
+    return np.max(errors[:-4])  # Exclude the last few unreliable estimates
+def optimise_theta_H2(N_s, steps, convergence_ratio, theta_0, max_runs, alpha, q1, q2, minruns = 100):
     theta = theta_0
     thetas = []
     runs = 0
     theta_change_ratio = 100
     while (theta_change_ratio > convergence_ratio and  runs <= max_runs) or runs < minruns:
         if runs == 0:
-            r1_samples, r2_samples, last_r1, last_r2 = generate_randoms_3d_vectorised(N_s, 1000, 0.5, theta, q1, q2)
+            r1_samples, r2_samples, last_r1, last_r2 = generate_randoms_3d_vectorised(N_s, steps, 0.5, theta, q1, q2)
         else:
-            r1_samples, r2_samples, last_r1, last_r2 = generate_randoms_3d_vectorised(N_s, 1000, 0.5, theta, q1, q2, last_r1, last_r2)
+            r1_samples, r2_samples, last_r1, last_r2 = generate_randoms_3d_vectorised(N_s, steps, 0.5, theta, q1, q2, last_r1, last_r2)
         energies = local_energy_H2(theta, q1, q2, r1_samples, r2_samples)
         exp_E_H = np.mean(energies)
         theta_prime = iterate_theta_H2(theta, q1, q2, r1_samples, r2_samples, alpha, exp_E_H, energies)
@@ -487,21 +478,26 @@ def optimise_theta_H2(N_s, convergence_ratio, theta_0, max_runs, alpha, q1, q2, 
         thetas.append(theta)
         runs += 1
         print(runs)
-    final_r1_samples, final_r2_samples, last_r1, last_r2 = generate_randoms_3d_vectorised(N_s, 1000, 0.5, theta, q1, q2, last_r1, last_r2)
+    final_r1_samples, final_r2_samples, last_r1, last_r2 = generate_randoms_3d_vectorised(N_s, 10000, 0.5, theta, q1, q2, last_r1, last_r2)
     final_energies = local_energy_H2(theta, q1, q2, final_r1_samples, final_r2_samples)
+    error = get_blocking_error(final_energies)
     final_E_exp = np.mean(final_energies)
 
-    return theta, final_E_exp, runs, thetas, final_r1_samples, final_r2_samples
+    return theta, final_E_exp, runs, thetas, final_r1_samples, final_r2_samples, error
 #%%
-Ns = 10
-alpha = 0.01
-theta_0 = [1.0, 1., 1.]  # Initial guess for theta
+Ns = 100
+alpha = 0.005
+theta_0 = [1., 1., 1.]  # Initial guess for theta
 
-qs = np.linspace(1e-2, 2., 10)  # Nuclear separations from near 0 to 2.5 a.u.
+qs = np.linspace(0.25, 2., 50)  # Nuclear separations from near 0 to 2.5 a.u.
 energies = []
 nuclear_separations = []
-test_samples_r1, test_samples_r2, _, _ = generate_randoms_3d_vectorised(Ns, 1000, 0.5, theta_0, np.array([-1.,0.,0.]), np.array([1.,0.,0.]))
-all_test_samples = np.vstack((test_samples_r1, test_samples_r2))
+errors = []
+test_samples_r1, test_samples_r2, _, _ = generate_randoms_3d_vectorised(Ns, 100, 0.5, theta_0, np.array([-0.7,0.,0.]), np.array([0.7,0.,0.]))
+theta, E_exp, _, _, f1, f2, error = optimise_theta_H2(Ns, 100, 1e-4, theta_0, 100, alpha, np.array([-0.7,0.,0.]), np.array([0.7,0.,0.]))
+print(f'{E_exp} +/- {error} Hartree for test nuclear separation of 1.4')
+all_test_samples = np.vstack((f1, f2))
+#%%
 test_x_vals = all_test_samples[:, 0]
 test_y_vals = all_test_samples[:, 1]
 plt.hist2d(test_x_vals, test_y_vals, bins=500, density=True, cmap=plt.cm.inferno, range=[[-4, 4], [-4, 4]])
@@ -514,8 +510,9 @@ plt.show()
 #%%
 for index, q in enumerate(qs):
     q1, q2 = np.array([q, 0., 0.]), np.array([-q, 0., 0.])
-    theta, E_exp, runs, thetas, final_r1_samples, final_r2_samples = optimise_theta_H2(Ns, 5e-5, theta_0, 1000, alpha, q1, q2)
+    theta, E_exp, runs, thetas, final_r1_samples, final_r2_samples, error = optimise_theta_H2(Ns, 100, 1e-4, theta_0, 2000, alpha, q1, q2,)
     energies.append(E_exp)
+    errors.append(error)
     nuclear_separations.append(2*q)
     print(f'For nuclear separation of {abs(q1 - q2)}, theta converged to {theta} in {runs} runs with expected energy of {E_exp} Hartree')
     all_samples = np.vstack((final_r1_samples, final_r2_samples))
@@ -535,73 +532,33 @@ for index, q in enumerate(qs):
     plt.show()
 #%%
 plt.plot(nuclear_separations, energies, 'o-', markersize=4)
+#plt.errorbar(nuclear_separations, energies, yerr=errors, fmt='o', markersize=4, capsize=5, label='Data with Error Bars')
 plt.xlabel('Nuclear Separation (a.u.)')
 plt.ylabel('Expected Energy (Hartree)')
 plt.title('H2 Molecule Energy vs Nuclear Separation')
-plt.axhline(y=-1.174, color='r', linestyle='--', label='Target (-1.174 Hartree)')
+#plt.axhline(y=-1.174, color='r', linestyle='--', label='Target (-1.174 Hartree)')
 plt.legend()
-plt.show()
-
-'''
-
-
-# --- VERIFICATION PARAMETERS ---
-
-q1_test = np.array([0., 0., 0.7])  # Nucleus A
-q2_test = np.array([0., 0., -0.7]) # Nucleus B (R = 1.4)
-
-# Safe starting guess
-theta_start = np.array([1.0, 0.5, 0.1])
-
-# Conservative learning rate
-learning_rate = 0.001 
-
-print("--- STARTING H2 EQUILIBRIUM TEST ---")
-print(f"Target Energy: approx -1.17 Hartree")
-
-theta_final, E_final, runs, hist_theta, r1_fin, r2_fin = optimise_theta_H2(
-    N_s=1000, 
-    convergence_ratio=1e-5, 
-    theta_0=theta_start, 
-    max_runs=1000, 
-    alpha=learning_rate, 
-    q1=q1_test, 
-    q2=q2_test
-)
-print(f"Converged in {runs} iterations")
-print(f"Final Theta: {theta_final}")
-print(f"Final Energy: {E_final}")
-
-# --- DIAGNOSTIC PLOT ---
-plt.plot(range(len(hist_theta)), [t[0] for t in hist_theta], 'o-', markersize=4)
-plt.xlabel('Iteration')
-plt.ylabel('Theta[0] value')
-plt.title('Theta[0] Optimization Progression for H2 Molecule')
 plt.grid()
 plt.show()
-# 1. Plot Energy Convergence
-# We want to see a "Hockey Stick" curve that flattens out
-plt.figure(figsize=(10,4))
-plt.subplot(1,2,1)
-# Note: You'll need to return the energy history from your optimizer 
-# or just plot the final printouts. Assuming you add 'energy_history' to returns:
-# plt.plot(energy_history) 
-plt.title("Did Energy Stabilize?")
-plt.xlabel("Iterations")
-plt.ylabel("Energy (Hartree)")
-plt.axhline(y=-1.174, color='r', linestyle='--', label='Target (-1.174)')
-plt.legend()
+#%%
+def morse(r, D, a, r0, E_single = -0.5):
+    return D * (1 - np.exp(-a * (r - r0)))**2 - D + 2*E_single
 
-# 2. Plot Electron Density
-# This confirms electrons are clustering around the nuclei
-plt.subplot(1,2,2)
-plt.hist2d(r1_fin[:,0], r1_fin[:,2], bins=50, cmap='plasma')
-plt.plot([0,0], [0.7, -0.7], 'wo', markersize=5, label='Nuclei') # Mark Nuclei
-plt.title("Electron Density (XZ Plane)")
-plt.xlabel("X")
-plt.ylabel("Z")
+# Fit Morse potential to data
+from scipy.optimize import curve_fit
+popt, pcov = curve_fit(morse, nuclear_separations, energies, p0=[0.2, 1.0, 1.4])
+D_fit, a_fit, r0_fit = popt
+r_fit = np.linspace(0.2, 4.0, 100)
+E_fit = morse(r_fit, D_fit, a_fit, r0_fit)
+plt.plot(nuclear_separations, energies, 'o-', label='Data', markersize=4)
+plt.plot(r_fit, E_fit, '--', label='Morse Fit')
+plt.xlabel('Nuclear Separation (a.u.)')
+plt.ylabel('Expected Energy (Hartree)')
+plt.title('Morse Potential Fit to H2 Energy Data')
+#plt.axhline(y=-1.174, color='r', linestyle='--', label='Target (-1.174 Hartree)')
+plt.grid()
 plt.legend()
-plt.tight_layout()
 plt.show()
-'''
+print(f'Fitted Morse Potential Parameters: D = {D_fit}, a = {a_fit}, r0 = {r0_fit}')
+print(np.mean(errors), np.median(errors))
 # %%
