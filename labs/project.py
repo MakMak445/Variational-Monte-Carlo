@@ -64,14 +64,25 @@ plt.show()
 After seeing graph, choosing 4th order difference scheme at h = 3e-3
 '''
 
-
+def get_blocking_error(data):
+    n = len(data)
+    var = np.var(data, ddof=1)
+    errors = [np.sqrt(var/n)]
+    while n >=4:
+        n = n // 2
+        blocked_data = np.mean(data[:n*2].reshape(-1, 2), axis=1)
+        var_new = np.var(blocked_data, ddof=1)
+        error_new = np.sqrt(var_new/n)
+        errors.append(error_new)
+        data = blocked_data
+    return np.max(errors[:-4])  # Exclude the last few unreliable estimates
 
 h_der = 3e-3
-def generate_randoms(N_s, n):
-    x_samples = np.zeros(N_s)
+def generate_randoms(N_s, n, burn_in = 100):
+    x_samples = np.zeros(N_s+burn_in)
     x_0 = 0.
     x = x_0
-    for i in range(N_s):
+    for i in range(N_s + burn_in):
         random_step = (np.random.rand() - 0.5) * 3
         x_prime = x + random_step
         p_x = (exact_wavefunc(x, n))**2
@@ -85,31 +96,43 @@ def generate_randoms(N_s, n):
             x = x_prime
         x_samples[i] = x
     norm_const = np.sqrt(np.pi) * 2**n * math.factorial(n) #analytically derived
-    x_uniform = np.linspace(np.min(x_samples), np.max(x_samples), 10000)
+    x_uniform = np.linspace(np.min(x_samples[burn_in:]), np.max(x_samples[burn_in:]), 10000)
     probs = exact_wavefunc(x_uniform, n)**2 / norm_const
-    return x_samples, x_uniform, probs
+    return x_samples[burn_in:], x_uniform, probs
 #%%
-n = 0
-N_s = 100000
+ns = np.arange(0,5)
+SHO_energies = []
+SHO_std = []
+SHO_errors = []
+for n in ns:
+    x, x_uniform, probs = generate_randoms(1000000, n)
+    plt.figure(figsize=(10, 6))
+
+    plt.hist(x, bins=100, density=True, color='skyblue', edgecolor='black', alpha=0.7)
+    plt.plot(x_uniform, probs, '--',color = 'red')
+    plt.grid(axis='y', alpha=0.5, linestyle='--')
+    plt.xlabel('Position x')
+    plt.ylabel('Probability Density')
+    plt.title('Histogram of Metropolis Samples')
+    plt.legend(['Analytical Probability Density', 'Metropolis Samples'])
+    plt.show()
+    local_energies = -0.5 * (1 / exact_wavefunc(x, n)) * cent_diff_4(x, n, h_der, exact_wavefunc) + 0.5 * x**2
+    exp_E = np.mean(local_energies)
+    SHO_energies.append(exp_E)
+    std_E = get_blocking_error(local_energies)
+    SHO_std.append(std_E)
+    E_to_exp_diff = (exp_E - (n + 0.5))
+    SHO_errors.append(E_to_exp_diff)
+
+    print(f'expected E is {exp_E}, with standard deviation of {std_E}, difference between actual and expected is {E_to_exp_diff}')
 #%%
-x, x_uniform, probs = generate_randoms(100000, n)
-plt.figure(figsize=(10, 6))
-
-plt.hist(x, bins=100, density=True, color='skyblue', edgecolor='black', alpha=0.7)
-plt.plot(x_uniform, probs, '--',color = 'red')
-plt.grid(axis='y', alpha=0.5, linestyle='--')
-plt.xlabel('Position x')
-plt.ylabel('Probability Density')
-plt.title('Histogram of Metropolis Samples')
-
-plt.show()
-#%%
-local_energies = -0.5 * (1 / exact_wavefunc(x, n)) * cent_diff_4(x, n, h_der, exact_wavefunc) + 0.5 * x**2
-exp_E = np.mean(local_energies)
-std_E = np.std(local_energies)
-E_to_exp_diff = (exp_E - (n + 0.5))
-
-print(f'expected E is {exp_E}, with standard deviation of {std_E}, difference between actual and expected is {E_to_exp_diff}')
+for n, E, err, diff in zip(ns, SHO_energies, SHO_std, SHO_errors):
+    print(
+        f"n = {n:2d}  "
+        f"E_MC = {E: .6f} ± {err:.1e}  "
+        f"exact = {n+0.5: .6f}  "
+        f"ΔE = {diff:.1e}"
+    )
 #%%
 def r(x, y, z):
     return np.sqrt(x**2 + y**2 + z**2)
@@ -161,8 +184,33 @@ def generate_randoms_3d(N_s, theta, burn_in = 100):
     
     return pos_samples[burn_in:]
 
+def generate_randoms_3d_single(n_walkers, steps, step_size, theta, r_0 = np.array([1e-5,1e-5,1e-5]), burn_in = 100):
+    rng = np.random.default_rng()
+    if r_0.ndim == 1:
+        pos = np.tile(r_0, (n_walkers, 1))
+    else:
+        pos = r_0.copy()
+    pos_samples = np.zeros((steps, n_walkers, 3))
+    p_x = (hydrogen_wavefunc(theta, pos[:,0], pos[:,1], pos[:,2]))**2
+    for i in range(steps + burn_in):
+        random1_step = rng.normal(0, step_size, (n_walkers, 3))
+        pos_prime = pos + random1_step
+        p_x_prime = (hydrogen_wavefunc(theta, pos_prime[:,0], pos_prime[:,1], pos_prime[:,2]))**2
+        with np.errstate(divide='ignore', invalid='ignore'):
+            ratio = p_x_prime / p_x
+            np.nan_to_num(ratio, copy=False, nan=0.0, posinf=1.0)
+            p_acc = np.minimum(ratio, 1.0)
+
+        rand = rng.random(n_walkers)
+        accepted = rand <= p_acc
+        pos[accepted] = pos_prime[accepted]
+        p_x[accepted] = p_x_prime[accepted]
+        if i >= burn_in:
+            pos_samples[i - burn_in] = pos
+    return pos_samples.reshape(-1, 3), pos_samples[-1]
+
 theta = 3.0 
-samples = generate_randoms_3d(100000, theta)
+samples, _ = generate_randoms_3d_single(1000, 1000, 0.5, theta, np.array([1e-5,1e-5,1e-5]))
 
 r_samples = np.sqrt(np.sum(samples**2, axis=1))
 #%%
@@ -177,7 +225,7 @@ analyt_laplacian = analytical_laplacian(theta_lap, rand_x, rand_y, rand_z)
 print(f"Absolute difference between analytical laplacian and numerically calculated laplacian is {abs(numerical_laplacian - analyt_laplacian)}, relative difference of {abs(numerical_laplacian - analyt_laplacian) / analyt_laplacian}")
 #%%
 plt.figure(figsize=(10, 6))
-plt.hist(r_samples, bins=100, density=True, alpha=0.6, label='Metropolis Samples', color='skyblue', edgecolor='black')
+plt.hist(r_samples, bins=200, density=True, alpha=0.6, label='Metropolis Samples', color='skyblue', edgecolor='black')
 
 r_plot = np.linspace(0, np.max(r_samples), 200)
 analytical_curve = 4 * (theta**3) * (r_plot**2) * np.exp(-2 * theta * r_plot)
@@ -204,13 +252,14 @@ def iterate_theta(theta, alpha, exp_E, energies, samples):
     new_theta = theta - alpha * der_H_theta(exp_E, energies, samples)
     return new_theta
 
-def optimise_theta(N_s, convergence_ratio, theta_0, max_runs, alpha):
+def optimise_theta(walkers, steps, convergence_ratio, theta_0, max_runs, alpha):
     theta = theta_0
     thetas = []
     runs = 0
     theta_change_ratio = 100
+    final_pos = np.array([1e-5,1e-5,1e-5])
     while theta_change_ratio > convergence_ratio and runs<= max_runs:
-        samples = generate_randoms_3d(N_s, theta)
+        samples, final_pos = generate_randoms_3d_single(walkers, steps, 0.5, theta, final_pos)
         x_vals = samples[:, 0]
         y_vals = samples[:, 1]
         z_vals = samples[:, 2]
@@ -221,13 +270,13 @@ def optimise_theta(N_s, convergence_ratio, theta_0, max_runs, alpha):
         theta = theta_prime
         thetas.append(theta)
         runs += 1
-    final_samples = generate_randoms_3d(N_s, theta)
+    final_samples, _ = generate_randoms_3d_single(walkers, steps, 0.5, theta, final_pos)
     final_x_vals = final_samples[:, 0]
     final_y_vals = final_samples[:, 1]
     final_z_vals = final_samples[:, 2]
     final_energies = local_energy_H_3D(theta, final_x_vals, final_y_vals, final_z_vals)
     final_E_exp = np.mean(final_energies)
-    return theta, final_E_exp, runs, thetas, final_x_vals, final_y_vals, final_z_vals
+    return theta, final_E_exp, runs, thetas, final_x_vals, final_y_vals, final_z_vals, final_pos
 #%%
 '''
 alphas = np.linspace(0.05, 2.1, 100)
@@ -241,7 +290,7 @@ for alpha in alphas:
         print(f'Optimization failed for alpha = {alpha} with error: {e}')
 '''
 #%%
-theta, final_E_exp, runs, thetas, final_x_vals, final_y_vals, final_z_vals = optimise_theta(1000, 1e-9, 2., 1000, 0.1)
+theta, final_E_exp, runs, thetas, final_x_vals, final_y_vals, final_z_vals, final_pos = optimise_theta(100, 1000, 1e-9, 2., 1000, 0.1)
 print(theta, final_E_exp, runs)
 plt.plot(range(len(thetas)), thetas, 'o-', markersize=4)
 plt.xlabel('Iteration')
@@ -259,25 +308,30 @@ plt.grid()
 plt.show()
 '''
 #%%
-random_proof_samples = generate_randoms_3d(100000, theta)
+random_proof_samples, _ = generate_randoms_3d_single(100, 100000, 0.5, theta, final_pos)
 final_x_vals = random_proof_samples[:, 0]
 final_y_vals = random_proof_samples[:, 1]
 final_z_vals = random_proof_samples[:, 2]
-fig, axs = plt.subplots(2, 2, figsize=(10, 10))
-axs[0,0].hist2d(final_x_vals, final_y_vals, bins=(100,100),  density=True, cmap=plt.cm.inferno)
-axs[0,0].set_title('100x100 Histogram in XY plane')
+#%%
+plt.figure(figsize=(8, 6))
 
-axs[0, 1].hist2d(final_x_vals, final_y_vals, bins=(50,50), density=True, cmap=plt.cm.inferno)
-axs[0,1].set_title('50x50 Histogram in XY plane')
+hist = plt.hist2d(
+    final_x_vals,
+    final_y_vals,
+    bins=(400, 400),
+    density=True,
+    cmap=plt.cm.inferno,
+    range=[[-4, 4], [-4, 4]]  # optional, but usually nice to fix
+)
 
-axs[1,0].hist2d(final_x_vals, final_y_vals, bins=(200,200), density=True, cmap=plt.cm.inferno)  
-axs[1,0].set_title('200x200 Histogram in XY plane') 
+plt.xlabel('x')
+plt.ylabel('y')
+plt.title('400×400 Histogram in XY plane')
+plt.gca().set_aspect('equal', adjustable='box')
 
-axs[1,1].hist2d(final_x_vals, final_y_vals, bins=(400,400), density=True, cmap=plt.cm.inferno)
-axs[1,1].set_title('400x400 Histogram in XY plane')
+cbar = plt.colorbar(label='Density')
+
 plt.tight_layout()
-#plt.colorbar(ax=axs.ravel().tolist(), label='Density')
-
 plt.show()
 #%%
 
@@ -448,18 +502,6 @@ def iterate_theta_H2(theta, q1, q2, r1, r2, alpha, exp_E, energies):
     new_theta = theta - alpha * der_H2_theta(theta, q1, q2, r1, r2, energies, exp_E)
     return new_theta
 
-def get_blocking_error(data):
-    n = len(data)
-    var = np.var(data, ddof=1)
-    errors = [np.sqrt(var/n)]
-    while n >=4:
-        n = n // 2
-        blocked_data = np.mean(data[:n*2].reshape(-1, 2), axis=1)
-        var_new = np.var(blocked_data, ddof=1)
-        error_new = np.sqrt(var_new/n)
-        errors.append(error_new)
-        data = blocked_data
-    return np.max(errors[:-4])  # Exclude the last few unreliable estimates
 def optimise_theta_H2(N_s, steps, convergence_ratio, theta_0, max_runs, alpha, q1, q2, minruns = 100):
     theta = theta_0
     thetas = []
@@ -477,7 +519,7 @@ def optimise_theta_H2(N_s, steps, convergence_ratio, theta_0, max_runs, alpha, q
         theta = theta_prime
         thetas.append(theta)
         runs += 1
-        print(runs)
+        #print(runs)
     final_r1_samples, final_r2_samples, last_r1, last_r2 = generate_randoms_3d_vectorised(N_s, 10000, 0.5, theta, q1, q2, last_r1, last_r2)
     final_energies = local_energy_H2(theta, q1, q2, final_r1_samples, final_r2_samples)
     error = get_blocking_error(final_energies)
@@ -485,51 +527,39 @@ def optimise_theta_H2(N_s, steps, convergence_ratio, theta_0, max_runs, alpha, q
 
     return theta, final_E_exp, runs, thetas, final_r1_samples, final_r2_samples, error
 #%%
-Ns = 100
-alpha = 0.005
-theta_0 = [1., 1., 1.]  # Initial guess for theta
-
-qs = np.linspace(0.25, 2., 50)  # Nuclear separations from near 0 to 2.5 a.u.
+n_qs = len(qs)
+indices_to_plot = [0, n_qs // 4, 3 * n_qs // 4, n_qs - 1]
+stored_plots = []
 energies = []
-nuclear_separations = []
 errors = []
-test_samples_r1, test_samples_r2, _, _ = generate_randoms_3d_vectorised(Ns, 100, 0.5, theta_0, np.array([-0.7,0.,0.]), np.array([0.7,0.,0.]))
-theta, E_exp, _, _, f1, f2, error = optimise_theta_H2(Ns, 100, 1e-4, theta_0, 100, alpha, np.array([-0.7,0.,0.]), np.array([0.7,0.,0.]))
-print(f'{E_exp} +/- {error} Hartree for test nuclear separation of 1.4')
-all_test_samples = np.vstack((f1, f2))
-#%%
-test_x_vals = all_test_samples[:, 0]
-test_y_vals = all_test_samples[:, 1]
-plt.hist2d(test_x_vals, test_y_vals, bins=500, density=True, cmap=plt.cm.inferno, range=[[-4, 4], [-4, 4]])
-plt.title(f'Histogram in XY plane for nuclear separation of 2.0')
-plt.xlim(-4,4)
-plt.ylim(-4,4)
-plt.gca().set_aspect('equal', adjustable='box')
-plt.show()
-#'''
-#%%
+nuclear_separations = []
+Ns = 100
+theta_0 = [1.,1.,1.]
+alpha = 0.005
 for index, q in enumerate(qs):
     q1, q2 = np.array([q, 0., 0.]), np.array([-q, 0., 0.])
-    theta, E_exp, runs, thetas, final_r1_samples, final_r2_samples, error = optimise_theta_H2(Ns, 100, 1e-4, theta_0, 2000, alpha, q1, q2,)
+    theta, E_exp, runs, thetas, final_r1_samples, final_r2_samples, error = optimise_theta_H2(Ns, 100, 1e-4, theta_0, 1000, alpha, q1, q2)
     energies.append(E_exp)
     errors.append(error)
     nuclear_separations.append(2*q)
     print(f'For nuclear separation of {abs(q1 - q2)}, theta converged to {theta} in {runs} runs with expected energy of {E_exp} Hartree')
-    all_samples = np.vstack((final_r1_samples, final_r2_samples))
-    x_vals = all_samples[:, 0]
-    y_vals = all_samples[:, 1]
-    plt.hist2d(x_vals, y_vals, bins=200, density=True, cmap=plt.cm.inferno, range=[[-4, 4], [-4, 4]])
-    plt.title(f'Histogram in XY plane for nuclear separation of {2*q}')
-    plt.xlim(-4,4)
-    plt.ylim(-4,4)
-    plt.gca().set_aspect('equal', adjustable='box')
-    plt.show()
-    plt.plot(range(len(thetas)), [t[0] for t in thetas], 'o-', markersize=4)
-    plt.xlabel('Iteration')
-    plt.ylabel('Theta[0] value')
-    plt.title(f'Theta[0] Optimization Progression for nuclear separation of {abs(q1 - q2)}')
-    plt.grid()
-    plt.show()
+    
+    if index in indices_to_plot:
+        all_samples = np.vstack((final_r1_samples, final_r2_samples))
+        stored_plots.append((2*q, all_samples[:, 0], all_samples[:, 1]))
+
+fig, axs = plt.subplots(2, 2, figsize=(10, 10))
+axs = axs.flatten()
+
+for i, (sep, x, y) in enumerate(stored_plots):
+    axs[i].hist2d(x, y, bins=200, density=True, cmap=plt.cm.inferno, range=[[-4, 4], [-4, 4]])
+    axs[i].set_title(f'Nuclear separation: {sep:.2f}')
+    axs[i].set_xlim(-4,4)
+    axs[i].set_ylim(-4,4)
+    axs[i].set_aspect('equal')
+
+plt.tight_layout()
+plt.show()
 #%%
 plt.plot(nuclear_separations, energies, 'o-', markersize=4)
 #plt.errorbar(nuclear_separations, energies, yerr=errors, fmt='o', markersize=4, capsize=5, label='Data with Error Bars')
