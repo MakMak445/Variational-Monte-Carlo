@@ -2,8 +2,8 @@
 import numpy as np
 from scipy.special import eval_hermite
 import matplotlib.pyplot as plt
-import random
 import math
+from scipy.optimize import curve_fit
 #%%
 #%%
 def exact_wavefunc(x, n):
@@ -55,7 +55,7 @@ plt.ylabel('relative error in derivative')
 plt.xscale('log')
 plt.yscale('log')
 plt.xlabel('step size')
-plt.vlines(1.75e-2, 0, 1, colors= 'red')
+#plt.vlines(3e-3, 0, 1, colors= 'red')
 plt.legend()
 plt.grid()
 plt.show()
@@ -105,7 +105,7 @@ SHO_energies = []
 SHO_std = []
 SHO_errors = []
 for n in ns:
-    x, x_uniform, probs = generate_randoms(1000000, n)
+    x, x_uniform, probs = generate_randoms(100000, n)
     plt.figure(figsize=(10, 6))
 
     plt.hist(x, bins=100, density=True, color='skyblue', edgecolor='black', alpha=0.7)
@@ -218,11 +218,21 @@ r_samples = np.sqrt(np.sum(samples**2, axis=1))
 Numerical verification of Laplacian
 
 '''
-rand_x, rand_y, rand_z = np.random.rand(), np.random.rand(), np.random.rand()
-theta_lap = np.random.rand() * 5
-numerical_laplacian = cent_diff_4_laplacian(rand_x, rand_y, rand_z, hydrogen_wavefunc, theta_lap, 3e-3)
-analyt_laplacian = analytical_laplacian(theta_lap, rand_x, rand_y, rand_z)
-print(f"Absolute difference between analytical laplacian and numerically calculated laplacian is {abs(numerical_laplacian - analyt_laplacian)}, relative difference of {abs(numerical_laplacian - analyt_laplacian) / analyt_laplacian}")
+def test_laplacian(n_points = 1000, h=3e-3):
+    max_diff = 0
+    diffs = np.zeros(n_points)
+    for i in range(n_points):
+        rand_x, rand_y, rand_z = np.random.rand(), np.random.rand(), np.random.rand()
+        theta_lap = np.random.rand() * 5
+        numerical_laplacian = cent_diff_4_laplacian(rand_x, rand_y, rand_z, hydrogen_wavefunc, theta_lap, h)
+        analyt_laplacian = analytical_laplacian(theta_lap, rand_x, rand_y, rand_z)
+        diff = abs((numerical_laplacian - analyt_laplacian) / analyt_laplacian)
+        diffs[i] = diff
+        if diff > max_diff:
+            max_diff = diff
+    print(f"Max relative difference: {max_diff}, Mean relative difference: {np.mean(diffs)}, Median relative difference: {np.median(diffs)}, Std of relative differences: {np.std(diffs)}")
+    return max_diff, np.mean(diffs), np.median(diffs), np.std(diffs)
+test_laplacian()
 #%%
 plt.figure(figsize=(10, 6))
 plt.hist(r_samples, bins=200, density=True, alpha=0.6, label='Metropolis Samples', color='skyblue', edgecolor='black')
@@ -287,15 +297,15 @@ for alpha in alphas:
         runs_list.append(runs_val)
         print(f'For alpha = {alpha}, theta converged to {theta} in {runs_val} runs with expected energy of {final_E_exp}')
     except Exception as e:
-        print(f'Optimization failed for alpha = {alpha} with error: {e}')
+        print(f'Optimisation failed for alpha = {alpha} with error: {e}')
 '''
 #%%
-theta, final_E_exp, runs, thetas, final_x_vals, final_y_vals, final_z_vals, final_pos = optimise_theta(100, 1000, 1e-9, 2., 1000, 0.1)
+theta, final_E_exp, runs, thetas, final_x_vals, final_y_vals, final_z_vals, final_pos = optimise_theta(100, 1000, 1e-7, 2., 1000, 0.1)
 print(theta, final_E_exp, runs)
 plt.plot(range(len(thetas)), thetas, 'o-', markersize=4)
 plt.xlabel('Iteration')
 plt.ylabel('Theta value')
-plt.title('Theta Optimization Progression')
+plt.title('Theta Optimisation Progression')
 plt.grid()
 plt.show()
 #%%
@@ -307,6 +317,7 @@ plt.title('Effect of Learning Rate on Convergence Speed')
 plt.grid()
 plt.show()
 '''
+E_single = final_E_exp
 #%%
 random_proof_samples, _ = generate_randoms_3d_single(100, 100000, 0.5, theta, final_pos)
 final_x_vals = random_proof_samples[:, 0]
@@ -502,7 +513,7 @@ def iterate_theta_H2(theta, q1, q2, r1, r2, alpha, exp_E, energies):
     new_theta = theta - alpha * der_H2_theta(theta, q1, q2, r1, r2, energies, exp_E)
     return new_theta
 
-def optimise_theta_H2(N_s, steps, convergence_ratio, theta_0, max_runs, alpha, q1, q2, minruns = 100):
+def optimise_theta_H2(N_s, steps, convergence_ratio, theta_0, max_runs, alpha, q1, q2, minruns = 25):
     theta = theta_0
     thetas = []
     runs = 0
@@ -527,13 +538,14 @@ def optimise_theta_H2(N_s, steps, convergence_ratio, theta_0, max_runs, alpha, q
 
     return theta, final_E_exp, runs, thetas, final_r1_samples, final_r2_samples, error
 #%%
+qs = np.linspace(0.25, 2.0, 25)
 n_qs = len(qs)
 indices_to_plot = [0, n_qs // 4, 3 * n_qs // 4, n_qs - 1]
 stored_plots = []
 energies = []
 errors = []
 nuclear_separations = []
-Ns = 100
+Ns = 10
 theta_0 = [1.,1.,1.]
 alpha = 0.005
 for index, q in enumerate(qs):
@@ -542,6 +554,7 @@ for index, q in enumerate(qs):
     energies.append(E_exp)
     errors.append(error)
     nuclear_separations.append(2*q)
+    theta_0 = theta  # Use the converged theta as the starting point for the next separation
     print(f'For nuclear separation of {abs(q1 - q2)}, theta converged to {theta} in {runs} runs with expected energy of {E_exp} Hartree')
     
     if index in indices_to_plot:
@@ -571,24 +584,48 @@ plt.legend()
 plt.grid()
 plt.show()
 #%%
-def morse(r, D, a, r0, E_single = -0.5):
+def morse(r, D, a, r0):
     return D * (1 - np.exp(-a * (r - r0)))**2 - D + 2*E_single
 
 # Fit Morse potential to data
-from scipy.optimize import curve_fit
-popt, pcov = curve_fit(morse, nuclear_separations, energies, p0=[0.2, 1.0, 1.4])
-D_fit, a_fit, r0_fit = popt
-r_fit = np.linspace(0.2, 4.0, 100)
-E_fit = morse(r_fit, D_fit, a_fit, r0_fit)
-plt.plot(nuclear_separations, energies, 'o-', label='Data', markersize=4)
-plt.plot(r_fit, E_fit, '--', label='Morse Fit')
-plt.xlabel('Nuclear Separation (a.u.)')
-plt.ylabel('Expected Energy (Hartree)')
-plt.title('Morse Potential Fit to H2 Energy Data')
-#plt.axhline(y=-1.174, color='r', linestyle='--', label='Target (-1.174 Hartree)')
-plt.grid()
-plt.legend()
-plt.show()
-print(f'Fitted Morse Potential Parameters: D = {D_fit}, a = {a_fit}, r0 = {r0_fit}')
-print(np.mean(errors), np.median(errors))
+def fit_morse(nuclear_separations, energies):
+    popt, pcov = curve_fit(morse, nuclear_separations, energies, p0=[0.2, 1.0, 1.4])
+    D_fit, a_fit, r0_fit = popt
+    r_fit = np.linspace(0.2, 4.0, 100)
+    E_fit = morse(r_fit, D_fit, a_fit, r0_fit)
+    plt.plot(nuclear_separations, energies, 'o', label='Data', markersize=4)
+    plt.plot(r_fit, E_fit, '--', label='Morse Fit')
+    plt.xlabel('Nuclear Separation (a.u.)')
+    plt.ylabel('Expected Energy (Hartree)')
+    plt.title('Morse Potential Fit to H2 Energy Data')
+    #plt.axhline(y=-1.174, color='r', linestyle='--', label='Target (-1.174 Hartree)')
+    plt.grid()
+    plt.legend()
+    plt.show()
+    print(f'Fitted Morse Potential Parameters: D = {D_fit}, a = {a_fit}, r0 = {r0_fit}')
+    print(f"mean relative error in E is {np.mean(errors)}, median relative error in E is {np.median(errors)}")
+    return D_fit, a_fit, r0_fit 
+D_fit, a_fit, r0_fit = fit_morse(nuclear_separations, energies)
+# %%
+qs_near_min = np.linspace(r0_fit-0.3, r0_fit+0.3, 10)
+n_qs_near = len(qs_near_min)
+indices_to_plot_near = [0, n_qs_near // 4, 3 * n_qs_near // 4, n_qs_near - 1]
+stored_plots_near = []
+Ns = 30
+theta_0 = [1.,1.,1.]
+alpha = 0.005
+for index, q in enumerate(qs_near_min):
+    q1, q2 = np.array([q/2, 0., 0.]), np.array([-q/2, 0., 0.])
+    theta, E_exp, runs, thetas, final_r1_samples, final_r2_samples, error = optimise_theta_H2(Ns, 200, 1e-4, theta_0, 1000, alpha, q1, q2)
+    energies.append(E_exp)
+    errors.append(error)
+    nuclear_separations.append(q)
+    theta_0 = theta  # Use the converged theta as the starting point for the next separation
+    print(f'For nuclear separation of {abs(q1 - q2)}, theta converged to {theta} in {runs} runs with expected energy of {E_exp} Hartree')
+    
+    if index in indices_to_plot_near:
+        all_samples = np.vstack((final_r1_samples, final_r2_samples))
+        stored_plots_near.append((q, all_samples[:, 0], all_samples[:, 1]))
+
+D_fit, a_fit, r0_fit = fit_morse(nuclear_separations, energies)
 # %%

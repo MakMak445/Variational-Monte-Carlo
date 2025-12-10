@@ -1,0 +1,21 @@
+expected E is 0.4999999999992113, with standard deviation of 7.30067389165825e-14, difference between actual and expected is -7.887024366937112e-13
+expected E is 1.4999999999942346, with standard deviation of 1.739212045489244e-13, difference between actual and expected is -5.765388166878438e-12
+expected E is 2.4999999999791496, with standard deviation of 3.98666003467237e-13, difference between actual and expected is -2.085043249167029e-11
+expected E is 3.499999999947264, with standard deviation of 8.307558940996485e-13, difference between actual and expected is -5.2736037758904786e-11
+expected E is 4.499999999888039, with standard deviation of 1.5817029819114847e-12, difference between actual and expected is -1.1196110705213869e-10
+
+n =  0  E_MC =  0.500000 ± 7.3e-14  exact =  0.500000  ΔE = -7.9e-13
+n =  1  E_MC =  1.500000 ± 1.7e-13  exact =  1.500000  ΔE = -5.8e-12
+n =  2  E_MC =  2.500000 ± 4.0e-13  exact =  2.500000  ΔE = -2.1e-11
+n =  3  E_MC =  3.500000 ± 8.3e-13  exact =  3.500000  ΔE = -5.3e-11
+n =  4  E_MC =  4.500000 ± 1.6e-12  exact =  4.500000  ΔE = -1.1e-10
+
+Max relative difference: 1.0951012861149459e-06, Mean relative difference: 3.3119355488744465e-09, Median relative difference: 2.647825574693093e-10, Std of relative differences: 3.71095073869681e-08
+
+H atom energy 1.0000016698884555 -0.5000000431111344 184
+
+Fitted Morse Potential Parameters: D = 0.14255875661869405, a = 1.3027402458403015, r0 = 1.367948234649577
+mean relative error in E is 0.0025839039265040304, median relative error in E is 0.0023112178436130526
+
+Fitted Morse Potential Parameters: D = 0.13878062427417212, a = 1.3008688388387086, r0 = 1.3736421409393222
+mean relative error in E is 0.0024214153503087418, median relative error in E is 0.002152101265229472
